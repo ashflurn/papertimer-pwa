@@ -10,6 +10,7 @@ import React, { useEffect, useMemo, useState } from "react";
  * 4) Reserve 5% of total time as 'Checking' and show it separately in UI
  * 5) BUGFIX: CSV export used an unterminated string; now uses "\n" correctly
  * 6) DEV TESTS: add lightweight tests for helpers and CSV export (opt-in via URL #runTests)
+ * 7) NEW: Student name on setup; exam screen shows “Good luck, <name>! Ace this exam!” banner
  */
 
 // ---------- Helpers ----------
@@ -43,6 +44,11 @@ export const splitAnsweringChecking = (totalSeconds: number) => {
 export const avgPerQuestionFromAnswering = (answeringSeconds: number, numQuestions: number) => {
   return Math.ceil(answeringSeconds / Math.max(1, numQuestions));
 };
+
+export const buildGreeting = (name: string) => `Good luck${name ? ", " + name : ""}! Ace this exam!`;
+
+// Robust newline constant to avoid accidental multi-line string issues in some editors
+const EOL = String.fromCharCode(10);
 
 // ---------- UI Atoms ----------
 function Stat({ label, value, subtle }: { label: string; value: React.ReactNode; subtle?: boolean }) {
@@ -97,6 +103,7 @@ export default function App() {
   const [phase, setPhase] = useState<"setup" | "countdown" | "exam" | "finished">("setup");
   const [numQuestions, setNumQuestions] = useState<number>(10);
   const [totalMinutes, setTotalMinutes] = useState<number>(90);
+  const [studentName, setStudentName] = useState<string>("");
 
   const [countdown, setCountdown] = useState<number>(10);
 
@@ -112,13 +119,13 @@ export default function App() {
   const { answering: answeringSeconds, checking: checkingSeconds } = splitAnsweringChecking(totalSeconds);
 
   // init arrays when numQuestions changes
-  React.useEffect(() => {
+  useEffect(() => {
     setQuestionTotals(Array.from({ length: numQuestions }, () => 0));
     setVisited(Array.from({ length: numQuestions }, () => false));
   }, [numQuestions]);
 
   // Countdown timer
-  React.useEffect(() => {
+  useEffect(() => {
     if (phase !== "countdown") return;
     if (countdown <= 0) {
       const now = Date.now();
@@ -132,7 +139,7 @@ export default function App() {
   }, [phase, countdown]);
 
   // Exam tick — update per-second for real-time UI + per-question accrual
-  React.useEffect(() => {
+  useEffect(() => {
     if (phase !== "exam") return;
     const handle = setInterval(() => {
       const now = Date.now();
@@ -151,7 +158,7 @@ export default function App() {
   }, [phase, activeQ, examStartTs, totalSeconds]);
 
   // Real-time elapsedSeconds — depend on lastTick so it updates every second
-  const elapsedSeconds = React.useMemo(() => {
+  const elapsedSeconds = useMemo(() => {
     if (!examStartTs) return 0;
     const base = phase === "exam" ? Date.now() : examEndTs || Date.now();
     return Math.min(totalSeconds, Math.max(0, Math.floor((base - examStartTs) / 1000)));
@@ -199,7 +206,7 @@ export default function App() {
 
   function exportCSV() {
     const rows = [["question_no", "total_seconds"], ...questionTotals.map((sec, i) => [i + 1, sec])];
-    const csv = rows.map((r) => r.join(",")).join("\\n"); // FIXED: proper newline string
+    const csv = rows.map((r) => r.join(",")).join(EOL); // FIXED: proper newline string
     downloadText("paper-timer-results.csv", csv);
   }
 
@@ -225,6 +232,8 @@ export default function App() {
               setNumQuestions={setNumQuestions}
               totalMinutes={totalMinutes}
               setTotalMinutes={setTotalMinutes}
+              studentName={studentName}
+              setStudentName={setStudentName}
               onStart={onStart}
             />
           )}
@@ -247,6 +256,7 @@ export default function App() {
               checkingSeconds={checkingSeconds}
               avgPerQuestion={avgPerQuestion}
               inCheckingWindow={inCheckingWindow}
+              studentName={studentName}
               onFinish={finishExam}
             />
           )}
@@ -266,13 +276,23 @@ export default function App() {
 }
 
 // ---------- Screens ----------
-function SetupScreen({ numQuestions, setNumQuestions, totalMinutes, setTotalMinutes, onStart }: any) {
+function SetupScreen({ numQuestions, setNumQuestions, totalMinutes, setTotalMinutes, studentName, setStudentName, onStart }: any) {
   return (
     <div className="bg-white rounded-2xl shadow-sm p-6 sm:p-8">
       <h2 className="text-xl font-semibold mb-1">Create Exam</h2>
       <p className="text-slate-600 mb-6">Configure the exam details and start when ready.</p>
 
       <div className="grid sm:grid-cols-2 gap-6">
+        <div className="sm:col-span-2">
+          <label className="block text-sm text-slate-600 mb-1">Student name (optional)</label>
+          <input
+            type="text"
+            placeholder="e.g., Aanya R."
+            value={studentName}
+            onChange={(e) => setStudentName((e.target as HTMLInputElement).value)}
+            className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-slate-300"
+          />
+        </div>
         <div>
           <label className="block text-sm text-slate-600 mb-1">Number of questions</label>
           <input
@@ -335,6 +355,7 @@ function ExamScreen({
   checkingSeconds,
   avgPerQuestion,
   inCheckingWindow,
+  studentName,
   onFinish
 }: any) {
   const progress = Math.min(100, (elapsedSeconds / totalSeconds) * 100);
@@ -345,6 +366,8 @@ function ExamScreen({
   const activeSec = activeIdx != null ? questionTotals[activeIdx] || 0 : 0;
   const activeRatio = avgPerQuestion > 0 ? activeSec / avgPerQuestion : 0;
   const warnLevel = activeRatio >= 2.8 ? "orange" : activeRatio >= 2 ? "amber" : null; // 2× → amber (yellow), ~3× → light orange
+
+  const greeting = buildGreeting(studentName || "");
 
   return (
     <div className="space-y-4">
@@ -371,6 +394,10 @@ function ExamScreen({
         </div>
         <div className="mt-4 w-full h-2 rounded-full bg-slate-100 overflow-hidden">
           <div className="h-full bg-slate-900 transition-all" style={{ width: `${progress}%` }} />
+        </div>
+        {/* Greeting banner */}
+        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-center">
+          <div className="text-base sm:text-lg font-semibold text-slate-800">{greeting}</div>
         </div>
       </div>
 
@@ -497,17 +524,27 @@ function runDevTests() {
     assertEqual("formatHMS(60)", formatHMS(60), "1:00");
     assertEqual("formatHMS(3599)", formatHMS(3599), "59:59");
     assertEqual("formatHMS(3600)", formatHMS(3600), "1:00:00");
+    assertEqual("formatHMS(-5)", formatHMS(-5), "0:00");
 
     // time split and avg tests
     const { answering, checking } = splitAnsweringChecking(6000); // 100 min
     assertEqual("splitAnsweringChecking answering", answering, 5700);
     assertEqual("splitAnsweringChecking checking", checking, 300);
     assertEqual("avgPerQuestion 5700/57", avgPerQuestionFromAnswering(5700, 57), 100);
+    const edgeSmall = splitAnsweringChecking(59);
+    assertEqual("splitAnsweringChecking(59).answering", edgeSmall.answering, 56);
+    assertEqual("splitAnsweringChecking(59).checking", edgeSmall.checking, 3);
+    assertEqual("avgPerQuestion 0/10", avgPerQuestionFromAnswering(0, 10), 0);
+    assertEqual("avgPerQuestion ceil(95/10)", avgPerQuestionFromAnswering(95, 10), 10);
 
     // CSV newline test
     const rows = [["question_no", "total_seconds"], [1, 12], [2, 34]];
-    const csv = rows.map((r) => r.join(",")).join("\\n");
-    assertEqual("CSV has 3 lines", csv.split("\\n").length, 3);
+    const csv = rows.map((r) => r.join(",")).join(EOL);
+    assertEqual("CSV has 3 lines", csv.split(EOL).length, 3);
+
+    // greeting tests
+    assertEqual("greeting empty name", buildGreeting(""), "Good luck! Ace this exam!");
+    assertEqual("greeting with name", buildGreeting("Aanya"), "Good luck, Aanya! Ace this exam!");
 
     console.groupCollapsed(`PaperTimer tests: ${passed} passed, ${failed} failed`);
     results.forEach((r) => (r.startsWith("✔︎") ? console.log(r) : console.warn(r)));
